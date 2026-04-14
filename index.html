@@ -138,7 +138,7 @@
                 const initLiff = async () => {
                     try {
                         // 替換為你的案場評估 LIFF ID
-                        await liff.init({ liffId: "你的LIFF_ID_填在這裡" });
+                        await liff.init({ liffId: "2009537146-fxWkjwBB" });
                         if (liff.isLoggedIn()) {
                             const profile = await liff.getProfile();
                             setLineUserId(profile.userId);
@@ -290,7 +290,7 @@
                 
                 try {
                     // 請替換為你實際的 n8n Webhook 網址
-                    const n8nWebhookUrl = "https://你的n8n網域/webhook/solar-deduct"; 
+                    const n8nWebhookUrl = "https://chiehworks-n8n.zeabur.app/webhook/solar-check"; 
                     
                     const response = await fetch(n8nWebhookUrl, {
                         method: 'POST',

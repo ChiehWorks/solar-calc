@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <meta name="robots" content="noindex, nofollow">
+
+    <title>太陽能安裝評估報告 - 光電AI助理</title>
+    
+    <link rel="icon" type="image/png" href="favicon.png?v=2">
+    <link rel="shortcut icon" href="favicon.png?v=2">
+    <link rel="apple-touch-icon" href="favicon.png?v=2">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="太陽能安裝評估工具 - 1分鐘產出專業光電報告">
+    <meta property="og:description" content="輸入土地/屋頂面積，自動計算模組排版、發電量與投資回報。支援PDF匯出，太陽能開發商必備神器。">
+    <meta property="og:image" content="https://你的ZEABUR網域.zeabur.app/og-preview.jpg">
+
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @media print { .no-print { display: none; } }
+        
+        /* 響應式 PDF 預覽容器 */
+        .pdf-preview-container {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow: hidden; 
+        }
+        
+        .a4-page-wrapper {
+            background-color: white;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            transform-origin: top center;
+            transition: transform 0.2s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root">
+        <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #f8fafc;">
+            <div style="width: 50px; height: 50px; border: 4px solid #e2e8f0; border-top: 4px solid #2563eb; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <p style="margin-top: 20px; color: #475569; font-family: sans-serif; font-weight: bold;">系統載入中，請稍候...</p>
+        </div>
+        <style>
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    iconRef.current.innerHTML = '';
+                    const iconElement = document.createElement('i');
+                    const lucideName = name.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+                    iconElement.setAttribute('data-lucide', lucideName);
+                    iconElement.style.width = `${size}px`;
+                    iconElement.style.height = `${size}px`;
+                    if (className) iconElement.className = className;
+                    iconRef.current.appendChild(iconElement);
+                    window.lucide.createIcons({
+                        attrs: { 'stroke-width': 2, width: size, height: size },
+                        nameAttr: 'data-lucide'
+                    });
+                }
+            }, [name, size, className]);
+            return <span ref={iconRef} className={`inline-flex items-center justify-center ${className}`} style={{ width: size, height: size }}></span>;
+        };
+
+        const DEFAULT_INPUTS = {
+            roofLength: 20,
+            roofWidth: 10,
+            moduleLength: 1.7,
+            moduleWidth: 1.1,
+            moduleWatt: 400,
+            fitRate: 4.5,
+            sunHours: 3.5,
+            costPerKw: 45000,
+        };
+
+        const SUN_HOURS_DATA = [
+            { region: '基隆市', val: 2.30 }, { region: '台北市', val: 2.58 },
+            { region: '新北市', val: 2.57 }, { region: '桃園市', val: 2.85 },
+            { region: '新竹市', val: 3.09 }, { region: '新竹縣', val: 3.00 },
+            { region: '苗栗縣', val: 3.27 }, { region: '台中市', val: 3.34 },
+            { region: '彰化縣', val: 3.40 }, { region: '南投縣', val: 3.07 },
+            { region: '雲林縣', val: 3.31 }, { region: '嘉義市', val: 3.22 },
+            { region: '嘉義縣', val: 3.31 }, { region: '台南市', val: 3.35 },
+            { region: '高雄市', val: 3.13 }, { region: '屏東縣', val: 3.15 },
+            { region: '宜蘭縣', val: 2.68 }, { region: '花蓮縣', val: 2.88 },
+            { region: '台東縣', val: 3.17 }, { region: '澎湖縣', val: 3.39 },
+            { region: '金門縣', val: 3.24 }, { region: '連江縣', val: 3.40 }
+        ];
+
+        const DEFAULT_CLIENT = {
+            date: new Date().toISOString().split('T')[0],
+            name: '',
+            phone: '',
+            address: '',
+        };
+
+        function App() {
+            const [lineUserId, setLineUserId] = useState('');
+            const [step, setStep] = useState(1);
+            const [inputs, setInputs] = useState(DEFAULT_INPUTS);
+            const [clientInfo, setClientInfo] = useState(DEFAULT_CLIENT);
+            const [selectedLayout, setSelectedLayout] = useState('portrait');
+            const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+            const [pdfProgress, setPdfProgress] = useState('');
+            const [pdfImgSrc, setPdfImgSrc] = useState(null);
+            const [showSunHoursModal, setShowSunHoursModal] = useState(false);
+            const [previewScale, setPreviewScale] = useState(1);
+            const [actualReportId, setActualReportId] = useState('系統核發中...');
+            const visualizerRef = useRef(null);
+
+            const GAP = 0.02;
+
+            // 初始化 LIFF 獲取使用者身分
+            useEffect(() => {
+                const initLiff = async () => {
+                    try {
+                        // 替換為你的案場評估 LIFF ID
+                        await liff.init({ liffId: "你的LIFF_ID_填在這裡" });
+                        if (liff.isLoggedIn()) {
+                            const profile = await liff.getProfile();
+                            setLineUserId(profile.userId);
+                        } else {
+                            liff.login();
+                        }
+                    } catch (err) {
+                        console.error('LIFF 初始化失敗', err);
+                    }
+                };
+                initLiff();
+            }, []);
+
+            useEffect(() => {
+                const handleResize = () => {
+                    const containerWidth = window.innerWidth - 32; 
+                    const a4Width = 794;
+                    if (containerWidth < a4Width) {
+                        setPreviewScale(containerWidth / a4Width);
+                    } else {
+                        setPreviewScale(1);
+                    }
+                };
+                handleResize();
+                window.addEventListener('resize', handleResize);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
+
+            const calculateLayout = (isPortrait) => {
+                const modH = isPortrait ? inputs.moduleLength : inputs.moduleWidth;
+                const modW = isPortrait ? inputs.moduleWidth : inputs.moduleLength;
+                const cols = Math.floor((inputs.roofLength + GAP) / (modW + GAP));
+                const rows = Math.floor((inputs.roofWidth + GAP) / (modH + GAP));
+                const count = Math.max(0, cols * rows);
+                const totalUsedW = cols > 0 ? (cols * modW) + (cols - 1) * GAP : 0;
+                const totalUsedH = rows > 0 ? (rows * modH) + (rows - 1) * GAP : 0;
+                return { count, rows, cols, modH, modW, totalUsedW, totalUsedH };
+            };
+
+            const portraitResult = calculateLayout(true);
+            const landscapeResult = calculateLayout(false);
+
+            useEffect(() => {
+                if (step === 2) {
+                    setSelectedLayout(landscapeResult.count > portraitResult.count ? 'landscape' : 'portrait');
+                }
+            }, [step, landscapeResult.count, portraitResult.count]);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setInputs(prev => ({ ...prev, [name]: value === '' ? 0 : parseFloat(value) }));
+            };
+
+            const handleClientChange = (e) => {
+                const { name, value } = e.target;
+                setClientInfo(prev => ({ ...prev, [name]: value }));
+            };
+
+            const currentResult = selectedLayout === 'portrait' ? portraitResult : landscapeResult;
+            const buildingArea = inputs.roofLength * inputs.roofWidth;
+            const capacityKw = (currentResult.count * inputs.moduleWatt) / 1000;
+            
+            const dailyIncomeRaw = inputs.fitRate * inputs.sunHours * capacityKw;
+            const dailyIncome = Math.round(dailyIncomeRaw);
+            const monthlyIncome = dailyIncome * 30; 
+            const yearlyIncome = monthlyIncome * 12; 
+            const twentyYearIncome = yearlyIncome * 20;
+            const estimatedCost = inputs.costPerKw * capacityKw;
+            
+            const roiYearsTotal = estimatedCost / (yearlyIncome || 1);
+            let roiYear = Math.floor(roiYearsTotal);
+            let roiMonth = Math.round((roiYearsTotal - roiYear) * 12);
+            if (roiMonth === 12) {
+                roiYear += 1;
+                roiMonth = 0;
+            }
+
+            const fmtMoney = (n) => Math.round(n).toLocaleString();
+            const fmtNum = (n) => parseFloat(n.toFixed(2)).toLocaleString();
+
+            const convertSvgToPng = async () => {
+                if (!visualizerRef.current) return null;
+                const svgElement = visualizerRef.current.querySelector('svg');
+                if (!svgElement) return null;
+
+                const serializer = new XMLSerializer();
+                const svgString = serializer.serializeToString(svgElement);
+                
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const width = 800;
+                const height = 400; 
+                canvas.width = width * 2;
+                canvas.height = height * 2;
+                if (ctx) ctx.scale(2, 2);
+
+                const img = new Image();
+                const svgBlob = new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'});
+                const url = URL.createObjectURL(svgBlob);
+                
+                return new Promise((resolve) => {
+                    img.onload = () => {
+                        if (ctx) ctx.drawImage(img, 0, 0, width, height);
+                        URL.revokeObjectURL(url);
+                        resolve(canvas.toDataURL('image/png'));
+                    };
+                    img.src = url;
+                });
+            };
+
+            const captureElement = async (elementId, windowWidth) => {
+                const element = document.getElementById(elementId);
+                if (!element) return null;
+
+                const clone = element.cloneNode(true);
+                const container = document.createElement('div');
+                container.style.position = 'absolute';
+                container.style.top = '0';
+                container.style.left = '0';
+                container.style.width = '794px'; 
+                container.style.zIndex = '-1000';
+                container.appendChild(clone);
+                document.body.appendChild(container);
+
+                try {
+                    const canvas = await window.html2canvas(clone, {
+                        scale: 2, 
+                        useCORS: true,
+                        logging: false,
+                        windowWidth: windowWidth,
+                        width: 794,
+                        scrollY: 0
+                    });
+                    document.body.removeChild(container);
+                    return canvas.toDataURL('image/jpeg', 0.95);
+                } catch (e) {
+                    document.body.removeChild(container);
+                    console.error(e);
+                    return null;
+                }
+            };
+
+            const generatePDF = async () => {
+                setIsGeneratingPdf(true);
+                
+                // 1. 呼叫 n8n 後端進行額度扣減與取得憑證
+                setPdfProgress('驗證權限與扣減額度...');
+                let finalReportId = `PV-${clientInfo.date.replace(/-/g, '')}-LOCAL`; // 本地備用流水號
+                
+                try {
+                    // 請替換為你實際的 n8n Webhook 網址
+                    const n8nWebhookUrl = "https://你的n8n網域/webhook/solar-deduct"; 
+                    
+                    const response = await fetch(n8nWebhookUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        // 若無 LIFF 環境則傳遞 fallback ID 供測試
+                        body: JSON.stringify({ userId: lineUserId || 'U547b18547fe5eee43874f8e7612d6253' }) 
+                    });
+                    
+                    const result = await response.json();
+                    if (!result.status) {
+                        alert("產出報告失敗：" + (result.reason || "目前權限不足或已達使用上限"));
+                        setIsGeneratingPdf(false);
+                        return;
+                    }
+                    
+                    // 覆寫為後端正式核發的 Report ID
+                    if(result.Report_ID) {
+                        finalReportId = result.Report_ID;
+                    }
+                } catch (err) {
+                    console.warn("API 呼叫失敗，將使用本地流水號生成。", err);
+                }
+
+                setActualReportId(finalReportId);
+                // 等待 React 狀態更新至 DOM 上
+                await new Promise(r => setTimeout(r, 600));
+
+                // 2. 開始繪製 PDF
+                setPdfProgress('準備圖表...');
+                if (!window.html2canvas || !window.jspdf) {
+                    alert("PDF 模組載入中，請稍後再試...");
+                    setIsGeneratingPdf(false);
+                    return;
+                }
+
+                try {
+                    const imgData = await convertSvgToPng();
+                    if (imgData) {
+                        setPdfImgSrc(imgData);
+                        await new Promise(r => setTimeout(r, 300));
+                    }
+
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF('p', 'mm', 'a4');
+                    const pdfWidth = 210;
+
+                    setPdfProgress('生成第一頁...');
+                    const page1Img = await captureElement('report-page-1', 800);
+                    if (page1Img) {
+                        const imgProps1 = pdf.getImageProperties(page1Img);
+                        const pdfHeight1 = (imgProps1.height * pdfWidth) / imgProps1.width;
+                        pdf.addImage(page1Img, 'JPEG', 0, 0, pdfWidth, pdfHeight1);
+                    }
+
+                    setPdfProgress('生成第二頁...');
+                    const page2Img = await captureElement('report-page-2', 800);
+                    if (page2Img) {
+                        pdf.addPage();
+                        const imgProps2 = pdf.getImageProperties(page2Img);
+                        const pdfHeight2 = (imgProps2.height * pdfWidth) / imgProps2.width;
+                        pdf.addImage(page2Img, 'JPEG', 0, 0, pdfWidth, pdfHeight2);
+                    }
+
+                    setPdfProgress('儲存中...');
+                    pdf.save(`太陽能評估報告_${finalReportId}.pdf`);
+
+                } catch (e) {
+                    console.error("生成失敗", e);
+                    alert("報告生成失敗，請重試");
+                } finally {
+                    setPdfImgSrc(null);
+                    setIsGeneratingPdf(false);
+                    setPdfProgress('');
+                }
+            };
+
+            const RoofVisualizer = ({ result, isPortrait, readOnly = false }) => {
+                const displayWidth = 700;
+                const ratio = inputs.roofLength / (inputs.roofWidth || 1);
+                let displayHeight = displayWidth / ratio;
+                if (readOnly && displayHeight > 500) displayHeight = 500;
+
+                const scale = displayWidth / inputs.roofLength;
+                const offsetX = (inputs.roofLength - result.totalUsedW) / 2 * scale;
+                const offsetY = (inputs.roofWidth - result.totalUsedH) / 2 * scale;
+
+                return (
+                    <div ref={visualizerRef} className={`w-full ${readOnly ? 'flex justify-center' : 'overflow-hidden border-2 border-slate-300 rounded-lg shadow-inner mt-4'}`}>
+                        {!readOnly && <div className="bg-slate-100 p-2 text-xs text-center border-b text-slate-500 font-medium">配置模擬圖 (置中鋪排，模組間距 2cm)</div>}
+                        <div className={`flex justify-center ${readOnly ? '' : 'bg-slate-50 p-4 md:p-8 overflow-auto'}`}>
+                            <svg width={readOnly ? displayWidth : "100%"} height={readOnly ? displayHeight + 60 : "auto"} viewBox={`-40 -40 ${displayWidth + 80} ${displayHeight + 80}`} className="drop-shadow-sm" style={readOnly ? {} : { minWidth: '300px', maxHeight: '400px' }}>
+                                <rect x="0" y="0" width={displayWidth} height={displayHeight} fill="#cbd5e1" stroke="#475569" strokeWidth="2" />
+                                <text x={displayWidth/2} y={-20} textAnchor="middle" fontSize="16" fontWeight="bold" fill="#475569">{inputs.roofLength}m</text>
+                                <text x={-20} y={displayHeight/2} textAnchor="middle" fontSize="16" fontWeight="bold" fill="#475569" transform={`rotate(-90, -20, ${displayHeight/2})`}>{inputs.roofWidth}m</text>
+                                <g transform={`translate(${offsetX}, ${offsetY})`}>
+                                    {Array.from({ length: result.rows }).map((_, r) => 
+                                        Array.from({ length: result.cols }).map((_, c) => {
+                                            const modW_px = result.modW * scale;
+                                            const modH_px = result.modH * scale;
+                                            const gap_px = GAP * scale;
+                                            const x = c * (modW_px + gap_px);
+                                            const y = r * (modH_px + gap_px);
+                                            return <rect key={`${r}-${c}`} x={x} y={y} width={modW_px} height={modH_px} fill="#2563eb" stroke="#1e3a8a" strokeWidth="1" />;
+                                        })
+                                    )}
+                                </g>
+                            </svg>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderInput = (label, name, unit, onHelpClick = null) => (
+                <div>
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="block text-sm font-medium text-slate-700">{label}</label>
+                        {onHelpClick && (
+                            <button onClick={onHelpClick} className="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-0.5 rounded flex items-center gap-1 transition-colors">
+                                <Icon name="MapPin" size={12} /> 查詢縣市數據
+                            </button>
+                        )}
+                    </div>
+                    <div className="relative">
+                        <input type="number" name={name} value={inputs[name] === 0 ? '' : inputs[name]} onChange={handleInputChange} placeholder="0" className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" />
+                        {unit && <span className="absolute right-3 top-2 text-slate-400 text-sm">{unit}</span>}
+                    </div>
+                </div>
+            );
+
+            const DonationSection = () => (
+                <div className="mt-8 bg-yellow-50 rounded-xl p-6 border border-yellow-200 text-center animate-fade-in flex flex-col items-center">
+                    <h3 className="text-yellow-800 font-bold text-lg mb-2">覺得這個工具好用嗎？</h3>
+                    <p className="text-yellow-700 text-sm mb-4">伺服器維護與功能開發需要經費，歡迎小額贊助，支持我持續提供免費服務！</p>
+                    <a 
+                        href="https://portaly.cc/chiehwrite/support" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold py-3 px-8 rounded-full transition-colors shadow-sm hover:shadow-md hover:-translate-y-0.5 transform duration-200 mt-2"
+                    >
+                        <Icon name="Coffee" size={20} className="text-yellow-900" />
+                        贊助開發經費
+                    </a>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-10">
+                    <header className="bg-gradient-to-r from-blue-900 to-slate-900 text-white p-4 shadow-lg sticky top-0 z-50">
+                        <div className="max-w-4xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-2"><Icon name="Sun" className="text-yellow-400" size={32} /><h1 className="text-lg md:text-xl font-bold tracking-wider">太陽能安裝評估工具</h1></div>
+                            <div className="text-xs md:text-sm bg-blue-800 px-2 py-1 rounded border border-blue-700">光電助理系統</div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-4xl mx-auto p-4 md:p-6">
+                        <div className="flex justify-between mb-8 relative px-4">
+                            <div className="absolute top-1/2 left-4 right-4 h-1 bg-slate-200 -z-10 transform -translate-y-1/2 rounded-full"></div>
+                            {[{ id: 1, label: "參數設定", icon: "Calculator" }, { id: 2, label: "效益評估", icon: "LayoutGrid" }, { id: 3, label: "報告輸出", icon: "FileText" }].map((s) => (
+                                <div key={s.id} className={`flex flex-col items-center gap-2 bg-slate-50 px-2 transition-all duration-300 ${step >= s.id ? 'text-blue-700' : 'text-slate-400'}`}>
+                                    <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center border-2 shadow-sm transition-all ${step >= s.id ? 'bg-blue-100 border-blue-600 scale-110' : 'bg-white border-slate-300'}`}><Icon name={s.icon} /></div>
+                                    <span className="text-xs font-bold">{s.label}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {step === 1 && (
+                            <div className="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden animate-fade-in">
+                                <div className="bg-blue-50 p-4 border-b border-blue-100 flex items-center gap-2"><Icon name="Calculator" className="text-blue-600" /><h2 className="font-bold text-lg text-blue-900">案場基礎數據輸入</h2></div>
+                                <div className="p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+                                    <div className="space-y-4">
+                                        <h3 className="font-bold text-slate-700 flex items-center gap-2 border-b pb-2"><Icon name="MapPin" size={18} /> 場地資訊</h3>
+                                        <div className="grid grid-cols-2 gap-4">{renderInput("可鋪面積長邊", "roofLength", "m")}{renderInput("可鋪面積寬邊", "roofWidth", "m")}</div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <h3 className="font-bold text-slate-700 flex items-center gap-2 border-b pb-2"><Icon name="LayoutGrid" size={18} /> 模組規格</h3>
+                                        <div className="grid grid-cols-2 gap-4">{renderInput("模組長邊", "moduleLength", "m")}{renderInput("模組寬邊", "moduleWidth", "m")}<div className="col-span-2">{renderInput("模組瓦數", "moduleWatt", "W")}</div></div>
+                                    </div>
+                                    <div className="space-y-4 md:col-span-2">
+                                        <h3 className="font-bold text-slate-700 flex items-center gap-2 border-b pb-2"><Icon name="TrendingUp" size={18} /> 財務參數</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            {renderInput("躉購費率", "fitRate", "元/度")}
+                                            {renderInput("日均發電", "sunHours", "小時/日", () => setShowSunHoursModal(true))}
+                                            {renderInput("1kW造價成本", "costPerKw", "元")}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="p-4 bg-slate-50 border-t flex justify-end"><button onClick={() => setStep(2)} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg flex items-center gap-2 shadow-lg font-bold">開始評估 <Icon name="ChevronRight" /></button></div>
+                            </div>
+                        )}
+
+                        {step === 2 && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white rounded-xl shadow-lg border border-slate-100 overflow-hidden">
+                                    <div className="bg-gradient-to-r from-blue-700 to-blue-900 p-4 text-white flex flex-col md:flex-row justify-between items-center gap-3">
+                                        <h2 className="font-bold text-lg flex items-center gap-2"><Icon name="LayoutGrid" /> 評估結果分析</h2>
+                                        <div className="flex bg-blue-900/50 rounded-lg p-1 w-full md:w-auto">
+                                            <button onClick={() => setSelectedLayout('portrait')} className={`flex-1 md:flex-none px-4 py-1.5 text-sm rounded-md transition-all flex items-center justify-center gap-2 ${selectedLayout === 'portrait' ? 'bg-white text-blue-900 shadow font-bold' : 'text-blue-100 hover:text-white'}`}>直鋪 ({portraitResult.count}片) {portraitResult.count > landscapeResult.count && <Icon name="CheckCircle" size={14} className="text-green-500"/>}</button>
+                                            <button onClick={() => setSelectedLayout('landscape')} className={`flex-1 md:flex-none px-4 py-1.5 text-sm rounded-md transition-all flex items-center justify-center gap-2 ${selectedLayout === 'landscape' ? 'bg-white text-blue-900 shadow font-bold' : 'text-blue-100 hover:text-white'}`}>橫鋪 ({landscapeResult.count}片) {landscapeResult.count > portraitResult.count && <Icon name="CheckCircle" size={14} className="text-green-500"/>}</button>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 md:p-6">
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+                                            <div className="bg-slate-50 p-3 md:p-4 rounded-xl border border-slate-200 hover:border-blue-300"><div className="text-slate-500 text-xs mb-1">建物面積</div><div className="text-lg md:text-xl font-bold text-slate-800">{fmtNum(buildingArea)} <span className="text-xs font-normal">m²</span></div></div>
+                                            <div className="bg-slate-50 p-3 md:p-4 rounded-xl border border-slate-200 hover:border-blue-300"><div className="text-slate-500 text-xs mb-1">設置片數</div><div className="text-lg md:text-xl font-bold text-blue-600">{currentResult.count} <span className="text-xs font-normal">片</span></div></div>
+                                            <div className="bg-slate-50 p-3 md:p-4 rounded-xl border border-slate-200 hover:border-blue-300"><div className="text-slate-500 text-xs mb-1">設置容量</div><div className="text-lg md:text-xl font-bold text-green-600">{fmtNum(capacityKw)} <span className="text-xs font-normal">kW</span></div></div>
+                                            <div className="bg-slate-50 p-3 md:p-4 rounded-xl border border-slate-200 hover:border-blue-300"><div className="text-slate-500 text-xs mb-1">回本週期</div><div className="text-lg md:text-xl font-bold text-orange-500">{roiYear}年{roiMonth}月</div></div>
+                                        </div>
+                                        <div className="border rounded-xl overflow-hidden shadow-sm">
+                                            <table className="w-full text-sm text-center"><thead className="bg-slate-100 text-slate-600"><tr><th className="p-3 md:p-4 text-center">評估項目</th><th className="p-3 md:p-4 text-center">數值 / 金額</th></tr></thead><tbody className="divide-y divide-slate-100">
+                                                <tr><td className="p-3 md:p-4 font-medium text-slate-600 text-center">躉購費率</td><td className="p-3 md:p-4 text-center font-medium text-slate-800">${inputs.fitRate} 元/度</td></tr>
+                                                <tr><td className="p-3 md:p-4 font-medium text-slate-600 text-center">日均發電</td><td className="p-3 md:p-4 text-center font-medium text-slate-800">{inputs.sunHours} 小時/日</td></tr>
+                                                <tr><td className="p-3 md:p-4 font-medium text-slate-600 text-center">電費 1 日收入</td><td className="p-3 md:p-4 text-center font-medium text-slate-800">${fmtMoney(dailyIncome)}</td></tr>
+                                                <tr><td className="p-3 md:p-4 font-medium text-slate-600 text-center">電費 1 月收入</td><td className="p-3 md:p-4 text-center font-bold text-slate-900">${fmtMoney(monthlyIncome)}</td></tr>
+                                                <tr><td className="p-3 md:p-4 font-medium text-slate-600 text-center">電費 1 年收入</td><td className="p-3 md:p-4 text-center font-bold text-slate-900">${fmtMoney(yearlyIncome)}</td></tr>
+                                                <tr className="bg-yellow-50"><td className="p-3 md:p-4 font-bold text-yellow-900 text-center">電費 20 年總收入</td><td className="p-3 md:p-4 text-center font-bold text-yellow-700">${fmtMoney(twentyYearIncome)}</td></tr>
+                                            </tbody></table>
+                                        </div>
+                                    </div>
+                                    <div className="px-4 md:px-6 pb-6"><DonationSection /></div>
+                                </div>
+                                <RoofVisualizer result={currentResult} isPortrait={selectedLayout === 'portrait'} />
+                                <div className="flex justify-between mt-6">
+                                    <button onClick={() => setStep(1)} className="px-6 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2 font-bold"><Icon name="ChevronLeft" /> 修改參數</button>
+                                    <button onClick={() => setStep(3)} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg flex items-center gap-2 shadow-lg font-bold">下一步：產出報告 <Icon name="ChevronRight" /></button>
+                                </div>
+                            </div>
+                        )}
+
+                        {step === 3 && (
+                            <div className="bg-white rounded-xl shadow-lg border border-slate-100 animate-fade-in">
+                                <div className="bg-blue-50 p-4 border-b border-blue-100 flex items-center gap-2"><Icon name="FileText" className="text-blue-600" /><h2 className="font-bold text-lg text-blue-900">報告資訊填寫 & 預覽</h2></div>
+                                <div className="p-4 md:p-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                                        <div><label className="block text-sm font-medium text-slate-700 mb-1">填表日期</label><input type="date" name="date" value={clientInfo.date} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
+                                        <div><label className="block text-sm font-medium text-slate-700 mb-1">業主名稱</label><input type="text" name="name" value={clientInfo.name} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
+                                        <div><label className="block text-sm font-medium text-slate-700 mb-1">聯絡電話</label><input type="text" name="phone" value={clientInfo.phone} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
+                                        <div><label className="block text-sm font-medium text-slate-700 mb-1">地址或座標</label><input type="text" name="address" value={clientInfo.address} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
+                                    </div>
+
+                                    <div className="pdf-preview-container bg-slate-200 p-8 rounded-xl">
+                                        <div style={{ transform: `scale(${previewScale})`, transformOrigin: 'top center', marginBottom: `${-1123 * (1 - previewScale) + 20}px` }}>
+                                            
+                                            {/* A4 Page 1 */}
+                                            <div id="report-page-1" className="a4-page-wrapper relative" style={{ width: '794px', height: '1123px', padding: '48px', backgroundColor: 'white' }}>
+                                                <div className="flex justify-between items-end border-b-4 border-blue-900 pb-6 mb-10">
+                                                    <div><h1 className="text-4xl font-extrabold text-blue-900 mb-2">太陽能開發評估報告</h1><p className="text-slate-500 font-medium text-lg">專業綠能效益分析</p></div>
+                                                    <div className="text-right text-sm text-slate-600"><p className="mb-1">日期：{clientInfo.date}</p><p>編號：<span className="font-mono font-bold text-slate-900">{actualReportId}</span></p></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-10 mb-10">
+                                                    <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                                                        <h3 className="font-bold text-blue-800 mb-4 border-b border-slate-200 pb-2 flex items-center gap-2 text-lg"><Icon name="User" size={20}/> 案場資訊</h3>
+                                                        <div className="space-y-4 text-base">
+                                                            <div className="flex justify-between items-baseline border-b border-slate-200 pb-1"><span className="text-slate-500 shrink-0">業主名稱</span> <span className="font-medium text-slate-900 text-right break-words max-w-[70%]">{clientInfo.name}</span></div>
+                                                            <div className="flex justify-between items-baseline border-b border-slate-200 pb-1"><span className="text-slate-500 shrink-0">聯絡電話</span> <span className="font-medium text-slate-900 text-right break-words max-w-[70%]">{clientInfo.phone}</span></div>
+                                                            <div className="flex justify-between items-baseline border-b border-slate-200 pb-1"><span className="text-slate-500 shrink-0">地址/座標</span> <span className="font-medium text-slate-900 text-right break-words max-w-[70%]">{clientInfo.address}</span></div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                                                        <h3 className="font-bold text-blue-800 mb-4 border-b border-slate-200 pb-2 flex items-center gap-2 text-lg"><Icon name="Zap" size={20}/> 系統規格</h3>
+                                                        <div className="space-y-4 text-base">
+                                                            <p className="flex justify-between border-b border-slate-200 pb-1"><span className="text-slate-500">可用面積</span> <span className="font-medium text-slate-900">{inputs.roofLength}m x {inputs.roofWidth}m</span></p>
+                                                            <p className="flex justify-between border-b border-slate-200 pb-1"><span className="text-slate-500">模組規格</span> <span className="font-medium text-slate-900">{inputs.moduleWatt}W</span></p>
+                                                            <p className="flex justify-between border-b border-slate-200 pb-1"><span className="text-slate-500">鋪設方式</span> <span className="font-medium text-slate-900">{selectedLayout === 'portrait' ? '直鋪' : '橫鋪'} (共{currentResult.count}片)</span></p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="mb-10">
+                                                    <h3 className="font-bold text-blue-800 mb-6 border-b border-slate-200 pb-2 flex items-center gap-2 text-lg"><Icon name="TrendingUp" size={20}/> 效益預估</h3>
+                                                    <table className="w-full text-base border-collapse border border-slate-200 shadow-sm">
+                                                        <thead className="bg-blue-50 text-blue-900"><tr><th className="border border-slate-200 p-4 text-center w-1/3">評估項目</th><th className="border border-slate-200 p-4 text-center">數值 / 金額</th></tr></thead>
+                                                        <tbody>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">設置容量</td><td className="border border-slate-200 p-4 text-center font-bold text-slate-900">{fmtNum(capacityKw)} kW</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">日均發電</td><td className="border border-slate-200 p-4 text-center font-medium text-slate-900">{inputs.sunHours} 小時/日</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">躉購費率</td><td className="border border-slate-200 p-4 text-center font-medium text-slate-900">${inputs.fitRate} 元/度</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">電費 1 日收入</td><td className="border border-slate-200 p-4 text-center font-bold text-slate-900">${fmtMoney(dailyIncome)}</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">電費 1 月收入</td><td className="border border-slate-200 p-4 text-center font-bold text-slate-900">${fmtMoney(monthlyIncome)}</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">電費 1 年收入</td><td className="border border-slate-200 p-4 text-center font-bold text-slate-900">${fmtMoney(yearlyIncome)}</td></tr>
+                                                            <tr className="bg-yellow-50"><td className="border border-slate-200 p-4 font-bold text-yellow-900 text-center">電費 20 年總收入</td><td className="border border-slate-200 p-4 text-center font-bold text-blue-700 text-xl">${fmtMoney(twentyYearIncome)}</td></tr>
+                                                            <tr><td className="border border-slate-200 p-4 font-medium text-slate-700 text-center">回收年限</td><td className="border border-slate-200 p-4 text-center font-bold text-orange-600">{roiYear} 年 {roiMonth} 個月</td></tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div className="absolute bottom-10 left-0 w-full text-center text-sm text-slate-400">Page 1 / 2</div>
+                                            </div>
+
+                                            {/* A4 Page 2 */}
+                                            <div id="report-page-2" className="a4-page-wrapper relative mt-8" style={{ width: '794px', height: '1123px', padding: '48px', backgroundColor: 'white' }}>
+                                                <div className="flex justify-between items-end border-b-4 border-blue-900 pb-6 mb-10">
+                                                    <div><h1 className="text-3xl font-extrabold text-blue-900 mb-2">排版模擬與備註</h1></div>
+                                                    <div className="text-right text-sm text-slate-600">{actualReportId}</div>
+                                                </div>
+                                                <div className="mb-10">
+                                                    <h3 className="font-bold text-blue-800 mb-6 border-b border-slate-200 pb-2 flex items-center gap-2 text-lg"><Icon name="LayoutGrid" size={20}/> 模擬示意圖</h3>
+                                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 flex justify-center items-center" style={{ minHeight: '400px' }}>
+                                                        {pdfImgSrc ? <img src={pdfImgSrc} alt="排版模擬圖" style={{ maxWidth: '100%', height: 'auto' }} /> : <RoofVisualizer result={currentResult} isPortrait={selectedLayout === 'portrait'} readOnly={true} />}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-8 p-6 bg-blue-50 rounded-xl border border-blue-100 text-base text-blue-900">
+                                                    <h4 className="font-bold mb-4 flex items-center gap-2 text-lg"><Icon name="CheckCircle" size={20}/> 評估備註</h4>
+                                                    <ul className="list-disc list-inside space-y-3 text-slate-700 ml-2">
+                                                        <li>本報告之發電量為預估值，實際發電量受日照、遮陰、方位角等因素影響。</li>
+                                                        <li>投資回收年限未計入維運成本與模組衰減率。</li>
+                                                        <li>本模擬圖僅供參考，實際鋪設需依現場狀況調整。</li>
+                                                    </ul>
+                                                </div>
+                                                <div className="absolute bottom-10 left-0 w-full text-center text-sm text-slate-400">Page 2 / 2</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-8"><DonationSection /></div>
+
+                                    <div className="mt-8 flex justify-between">
+                                        <button onClick={() => setStep(2)} className="px-6 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2 font-bold transition-all"><Icon name="ChevronLeft" /> 返回修改</button>
+                                        <button onClick={generatePDF} disabled={isGeneratingPdf} className="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg flex items-center gap-2 shadow-lg font-bold disabled:opacity-50 transition-all">
+                                            {isGeneratingPdf ? <><Icon name="RotateCw" className="animate-spin mr-2" /> {pdfProgress || '處理中...'}</> : <><Icon name="Download" className="mr-2" /> 下載 PDF 報告</>}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <section className="max-w-4xl mx-auto px-4 md:px-6 mb-8 no-print">
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:p-8">
+                            <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b border-slate-100 pb-3">
+                                <Icon name="BookOpen" className="text-blue-600" /> 系統使用說明
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="space-y-3">
+                                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg">1</div>
+                                    <h4 className="font-bold text-slate-700">設定參數</h4>
+                                    <p className="text-sm text-slate-500 leading-relaxed">輸入案場的可鋪設長寬尺寸，選擇太陽能模組規格，並設定躉購費率、日均發電與預估造價成本。</p>
+                                </div>
+                                <div className="space-y-3">
+                                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg">2</div>
+                                    <h4 className="font-bold text-slate-700">評估效益</h4>
+                                    <p className="text-sm text-slate-500 leading-relaxed">系統會自動計算直鋪與橫鋪的最佳排版數量，並提供發電量預估、年收入分析及投資回收年限試算。</p>
+                                </div>
+                                <div className="space-y-3">
+                                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg">3</div>
+                                    <h4 className="font-bold text-slate-700">產出報告</h4>
+                                    <p className="text-sm text-slate-500 leading-relaxed">一鍵生成包含排版模擬圖與財務分析的專業 PDF 報告，並透過雲端扣減使用權限。</p>
+                                </div>
+                            </div>
+                            <div className="mt-6 pt-4 border-t border-slate-100 text-xs text-slate-400">
+                                <span className="font-bold text-slate-500">注意事項：</span> 本工具之計算結果僅供初步評估參考，實際建置效益需視現場遮陰狀況、方位角、台電饋線容量及最新法規而定。
+                            </div>
+                        </div>
+                    </section>
+                    
+                    <footer className="w-full text-center py-6 mt-8 border-t border-slate-200 text-slate-500 text-sm no-print">
+                        <p>若發現計算錯誤或系統問題，歡迎來信告知：</p>
+                        <a href="mailto:chieh.leeyu@gmail.com" className="text-blue-600 hover:text-blue-800 hover:underline font-medium mt-1 inline-block">chieh.leeyu@gmail.com</a>
+                    </footer>
+
+                    {showSunHoursModal && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowSunHoursModal(false)}>
+                            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl animate-fade-in" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Icon name="Sun" className="text-yellow-500"/> 各縣市日均發電參考</h3>
+                                    <button onClick={() => setShowSunHoursModal(false)} className="text-slate-400 hover:text-slate-600 p-1"><Icon name="X" /></button>
+                                </div>
+                                <div className="grid grid-cols-4 gap-2 mb-4">
+                                    {SUN_HOURS_DATA.map(d => (
+                                        <button 
+                                            key={d.region}
+                                            onClick={() => {
+                                                setInputs(prev => ({ ...prev, sunHours: d.val }));
+                                                setShowSunHoursModal(false);
+                                            }}
+                                            className="p-2 border border-slate-200 rounded hover:bg-blue-50 hover:border-blue-300 transition-all text-center group"
+                                        >
+                                            <div className="text-sm font-medium text-slate-700 group-hover:text-blue-700">{d.region}</div>
+                                            <div className="text-xs text-slate-500 font-mono group-hover:text-blue-600">{d.val.toFixed(2)}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-slate-400 text-center bg-slate-50 p-2 rounded">
+                                    數據來源：台灣電力公司 113年各縣市平均各機組太陽光電容量因數<br/>
+                                    網址：<a href="https://www.taipower.com.tw/2289/2363/2380/2385/10625/normalPost" target="_blank" className="text-blue-500 underline">台電官網</a>
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

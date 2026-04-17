@@ -97,17 +97,17 @@
         };
 
         const SUN_HOURS_DATA = [
-            { region: '基隆市', val: 2.30 }, { region: '台北市', val: 2.58 },
-            { region: '新北市', val: 2.57 }, { region: '桃園市', val: 2.85 },
-            { region: '新竹市', val: 3.09 }, { region: '新竹縣', val: 3.00 },
-            { region: '苗栗縣', val: 3.27 }, { region: '台中市', val: 3.34 },
-            { region: '彰化縣', val: 3.40 }, { region: '南投縣', val: 3.07 },
-            { region: '雲林縣', val: 3.31 }, { region: '嘉義市', val: 3.22 },
-            { region: '嘉義縣', val: 3.31 }, { region: '台南市', val: 3.35 },
-            { region: '高雄市', val: 3.13 }, { region: '屏東縣', val: 3.15 },
-            { region: '宜蘭縣', val: 2.68 }, { region: '花蓮縣', val: 2.88 },
-            { region: '台東縣', val: 3.17 }, { region: '澎湖縣', val: 3.39 },
-            { region: '金門縣', val: 3.24 }, { region: '連江縣', val: 3.40 }
+            { region: '基隆市', val: 2.64 }, { region: '台北市', val: 2.75 },
+            { region: '新北市', val: 2.71 }, { region: '桃園市', val: 2.97 },
+            { region: '新竹市', val: 3.20 }, { region: '新竹縣', val: 3.02 },
+            { region: '苗栗縣', val: 3.25 }, { region: '台中市', val: 3.29 },
+            { region: '彰化縣', val: 3.36 }, { region: '南投縣', val: 2.99 },
+            { region: '雲林縣', val: 3.24 }, { region: '嘉義市', val: 3.14 },
+            { region: '嘉義縣', val: 3.18 }, { region: '台南市', val: 3.31 },
+            { region: '高雄市', val: 3.14 }, { region: '屏東縣', val: 3.02 },
+            { region: '宜蘭縣', val: 2.76 }, { region: '花蓮縣', val: 2.87 },
+            { region: '台東縣', val: 3.10 }, { region: '澎湖縣', val: 3.42 },
+            { region: '金門縣', val: 3.52 }, { region: '連江縣', val: 3.71 }
         ];
 
         const DEFAULT_CLIENT = {
@@ -115,6 +115,7 @@
             name: '',
             phone: '',
             address: '',
+            email: '', // 新增 Email 預設值
         };
 
         function App() {
@@ -129,19 +130,24 @@
             const [showSunHoursModal, setShowSunHoursModal] = useState(false);
             const [previewScale, setPreviewScale] = useState(1);
             const [actualReportId, setActualReportId] = useState('系統核發中...');
+            
+            // 新增：抓取使用者資料的狀態
+            const [isFetchingUser, setIsFetchingUser] = useState(false);
+            
             const visualizerRef = useRef(null);
-
             const GAP = 0.02;
 
-            // 初始化 LIFF 獲取使用者身分
+            // 初始化 LIFF 獲取使用者身分，並自動打 API 查 Email
             useEffect(() => {
                 const initLiff = async () => {
                     try {
-                        // 替換為你的案場評估 LIFF ID
                         await liff.init({ liffId: "2009537146-fxWkjwBB" });
                         if (liff.isLoggedIn()) {
                             const profile = await liff.getProfile();
                             setLineUserId(profile.userId);
+                            
+                            // 拿到 userId 後，自動去 NocoDB 查 Email
+                            fetchUserData(profile.userId);
                         } else {
                             liff.login();
                         }
@@ -151,6 +157,28 @@
                 };
                 initLiff();
             }, []);
+
+            // 新增：向後端查詢使用者 Email 的函式
+            const fetchUserData = async (uid) => {
+                setIsFetchingUser(true);
+                try {
+                    const response = await fetch(`https://chiehworks-n8n.zeabur.app/webhook/solar-check`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: uid })
+                    });
+                    const data = await response.json();
+                    
+                    // 假設 n8n 回傳的資料結構中有找到 Email，自動預填到輸入框
+                    if (data.status && data.user && data.user.Email) {
+                        setClientInfo(prev => ({ ...prev, email: data.user.Email }));
+                    }
+                } catch (e) {
+                    console.warn("無法取得使用者資料", e);
+                } finally {
+                    setIsFetchingUser(false);
+                }
+            };
 
             useEffect(() => {
                 const handleResize = () => {
@@ -281,52 +309,26 @@
                 }
             };
 
+            // 大幅修改：將產生 PDF 的邏輯改為傳送到後端寄信
             const generatePDF = async () => {
-                setIsGeneratingPdf(true);
-                
-                // 1. 呼叫 n8n 後端進行額度扣減與取得憑證
-                setPdfProgress('驗證權限與扣減額度...');
-                let finalReportId = `PV-${clientInfo.date.replace(/-/g, '')}-LOCAL`; // 本地備用流水號
-                
-                try {
-                    // 請替換為你實際的 n8n Webhook 網址
-                    const n8nWebhookUrl = "https://chiehworks-n8n.zeabur.app/webhook/solar-check"; 
-                    
-                    const response = await fetch(n8nWebhookUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        // 若無 LIFF 環境則傳遞 fallback ID 供測試
-                        body: JSON.stringify({ userId: lineUserId || 'U547b18547fe5eee43874f8e7612d6253' }) 
-                    });
-                    
-                    const result = await response.json();
-                    if (!result.status) {
-                        alert("產出報告失敗：" + (result.reason || "目前權限不足或已達使用上限"));
-                        setIsGeneratingPdf(false);
-                        return;
-                    }
-                    
-                    // 覆寫為後端正式核發的 Report ID
-                    if(result.Report_ID) {
-                        finalReportId = result.Report_ID;
-                    }
-                } catch (err) {
-                    console.warn("API 呼叫失敗，將使用本地流水號生成。", err);
-                }
-
-                setActualReportId(finalReportId);
-                // 等待 React 狀態更新至 DOM 上
-                await new Promise(r => setTimeout(r, 600));
-
-                // 2. 開始繪製 PDF
-                setPdfProgress('準備圖表...');
-                if (!window.html2canvas || !window.jspdf) {
-                    alert("PDF 模組載入中，請稍後再試...");
-                    setIsGeneratingPdf(false);
+                // 防呆：確認 Email 有填寫
+                if (!clientInfo.email) {
+                    alert("請輸入接收報告的 Email！");
                     return;
                 }
 
+                setIsGeneratingPdf(true);
+                setPdfProgress('準備報告中...');
+                let finalReportId = `PV-${clientInfo.date.replace(/-/g, '')}-LOCAL`; 
+                
                 try {
+                    // 1. 開始繪製 PDF 圖表
+                    if (!window.html2canvas || !window.jspdf) {
+                        alert("PDF 模組載入中，請稍後再試...");
+                        setIsGeneratingPdf(false);
+                        return;
+                    }
+
                     const imgData = await convertSvgToPng();
                     if (imgData) {
                         setPdfImgSrc(imgData);
@@ -354,12 +356,41 @@
                         pdf.addImage(page2Img, 'JPEG', 0, 0, pdfWidth, pdfHeight2);
                     }
 
-                    setPdfProgress('儲存中...');
-                    pdf.save(`太陽能評估報告_${finalReportId}.pdf`);
+                    // 2. 將產出的 PDF 轉成字串，準備送給 n8n
+                    setPdfProgress('上傳並寄送 Email...');
+                    const pdfBase64 = pdf.output('datauristring').split(',')[1];
+
+                    // 3. 呼叫 n8n 扣點與寄送 API
+                    const n8nWebhookUrl = "https://chiehworks-n8n.zeabur.app/webhook/solar-deduct"; 
+                    
+                    const response = await fetch(n8nWebhookUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            userId: lineUserId || 'U547b18547fe5eee43874f8e7612d6253',
+                            pdfBase64: pdfBase64,
+                            email: clientInfo.email,   // 傳送確認過的 Email 過去
+                            clientName: clientInfo.name
+                        }) 
+                    });
+                    
+                    const result = await response.json();
+                    if (!result.status) {
+                        alert("寄送失敗：" + (result.reason || "目前權限不足或已達使用上限"));
+                        setIsGeneratingPdf(false);
+                        return;
+                    }
+                    
+                    // 成功寄出
+                    alert(`✅ 報告已寄出！\n請至您的信箱 [${clientInfo.email}] 查收 PDF 附件。`);
+                    
+                    if(result.Report_ID) {
+                        setActualReportId(result.Report_ID);
+                    }
 
                 } catch (e) {
                     console.error("生成失敗", e);
-                    alert("報告生成失敗，請重試");
+                    alert("系統連線異常，請檢查網路狀態");
                 } finally {
                     setPdfImgSrc(null);
                     setIsGeneratingPdf(false);
@@ -523,11 +554,30 @@
                             <div className="bg-white rounded-xl shadow-lg border border-slate-100 animate-fade-in">
                                 <div className="bg-blue-50 p-4 border-b border-blue-100 flex items-center gap-2"><Icon name="FileText" className="text-blue-600" /><h2 className="font-bold text-lg text-blue-900">報告資訊填寫 & 預覽</h2></div>
                                 <div className="p-4 md:p-6">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                                         <div><label className="block text-sm font-medium text-slate-700 mb-1">填表日期</label><input type="date" name="date" value={clientInfo.date} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
                                         <div><label className="block text-sm font-medium text-slate-700 mb-1">業主名稱</label><input type="text" name="name" value={clientInfo.name} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
                                         <div><label className="block text-sm font-medium text-slate-700 mb-1">聯絡電話</label><input type="text" name="phone" value={clientInfo.phone} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
                                         <div><label className="block text-sm font-medium text-slate-700 mb-1">地址或座標</label><input type="text" name="address" value={clientInfo.address} onChange={handleClientChange} className="w-full p-2 border border-slate-300 rounded-lg" /></div>
+                                    </div>
+
+                                    {/* 新增：Email 智慧輸入區塊 */}
+                                    <div className="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                                        <label className="block text-sm font-bold text-blue-900 mb-2 flex items-center gap-2"><Icon name="Mail" size={18}/> 接收報告 Email</label>
+                                        <div className="relative">
+                                            <input
+                                                type="email"
+                                                name="email"
+                                                value={clientInfo.email}
+                                                onChange={(e) => setClientInfo({...clientInfo, email: e.target.value})}
+                                                placeholder={isFetchingUser ? "系統自動讀取中..." : "請輸入要接收 PDF 的 Email"}
+                                                className="w-full p-3 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                            />
+                                            {isFetchingUser && <Icon name="RotateCw" className="absolute right-3 top-3 animate-spin text-blue-400" size={20}/>}
+                                        </div>
+                                        <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                                            <Icon name="Info" size={12}/> 系統將以此信箱發送正式 PDF 報告，若顯示資料有誤請直接手動修改。
+                                        </p>
                                     </div>
 
                                     <div className="pdf-preview-container bg-slate-200 p-8 rounded-xl">
@@ -606,7 +656,7 @@
                                     <div className="mt-8 flex justify-between">
                                         <button onClick={() => setStep(2)} className="px-6 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2 font-bold transition-all"><Icon name="ChevronLeft" /> 返回修改</button>
                                         <button onClick={generatePDF} disabled={isGeneratingPdf} className="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg flex items-center gap-2 shadow-lg font-bold disabled:opacity-50 transition-all">
-                                            {isGeneratingPdf ? <><Icon name="RotateCw" className="animate-spin mr-2" /> {pdfProgress || '處理中...'}</> : <><Icon name="Download" className="mr-2" /> 下載 PDF 報告</>}
+                                            {isGeneratingPdf ? <><Icon name="RotateCw" className="animate-spin mr-2" /> {pdfProgress || '處理中...'}</> : <><Icon name="Mail" className="mr-2" /> 確認並發送報告</>}
                                         </button>
                                     </div>
                                 </div>
@@ -633,7 +683,7 @@
                                 <div className="space-y-3">
                                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg">3</div>
                                     <h4 className="font-bold text-slate-700">產出報告</h4>
-                                    <p className="text-sm text-slate-500 leading-relaxed">一鍵生成包含排版模擬圖與財務分析的專業 PDF 報告，並透過雲端扣減使用權限。</p>
+                                    <p className="text-sm text-slate-500 leading-relaxed">一鍵生成包含排版模擬圖與財務分析的專業 PDF 報告，並透過雲端寄送至指定信箱。</p>
                                 </div>
                             </div>
                             <div className="mt-6 pt-4 border-t border-slate-100 text-xs text-slate-400">
@@ -670,7 +720,7 @@
                                     ))}
                                 </div>
                                 <p className="text-xs text-slate-400 text-center bg-slate-50 p-2 rounded">
-                                    數據來源：台灣電力公司 113年各縣市平均各機組太陽光電容量因數<br/>
+                                    數據來源：台灣電力公司 114年各縣市平均各機組太陽光電容量因數<br/>
                                     網址：<a href="https://www.taipower.com.tw/2289/2363/2380/2385/10625/normalPost" target="_blank" className="text-blue-500 underline">台電官網</a>
                                 </p>
                             </div>
